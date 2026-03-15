@@ -1,0 +1,15 @@
+# Compiled binaries (root-level only, not the cmd/agent/ source directory)
+/agent
+/agent.exe
+*.exe
+bin/
+
+# Config with real credentials (use config.example.yaml as template)
+config.yaml
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
