@@ -15,7 +15,13 @@ import (
 	"time"
 )
 
-const saasURL = "https://app.opensearchdoctor.com"
+// saasURL is the default platform URL. Override with OPENSEARCH_DOCTOR_URL env var (dev/testing only).
+var saasURL = func() string {
+	if v := os.Getenv("OPENSEARCH_DOCTOR_URL"); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return "https://app.opensearchdoctor.com"
+}()
 
 // runInit runs the interactive setup wizard.
 func runInit(configPath string) {
