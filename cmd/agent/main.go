@@ -26,7 +26,13 @@ func main() {
 	configPath := flag.String("config", "config.yaml", "path to config file")
 	runOnce := flag.Bool("once", false, "run diagnostics once and exit")
 	testMode := flag.Bool("test", false, "run diagnostics, print results, do NOT send to SaaS")
+	initMode := flag.Bool("init", false, "run interactive setup wizard")
 	flag.Parse()
+
+	if *initMode {
+		runInit(*configPath)
+		// runInit exits on service install; falls through only for --run-once choice
+	}
 
 	log, _ := zap.NewProduction()
 	defer log.Sync() //nolint:errcheck

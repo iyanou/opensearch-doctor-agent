@@ -15,11 +15,11 @@ Go to **Settings → Agent Keys** in your OpenSearch Doctor dashboard and create
 
 | Platform | Download |
 |---|---|
-| Linux x86_64 | [agent-linux-amd64](https://github.com/YOUR_ORG/opensearch-doctor-agent/releases/latest/download/agent-linux-amd64) |
-| Linux ARM64 | [agent-linux-arm64](https://github.com/YOUR_ORG/opensearch-doctor-agent/releases/latest/download/agent-linux-arm64) |
-| macOS (Apple Silicon) | [agent-darwin-arm64](https://github.com/YOUR_ORG/opensearch-doctor-agent/releases/latest/download/agent-darwin-arm64) |
-| macOS (Intel) | [agent-darwin-amd64](https://github.com/YOUR_ORG/opensearch-doctor-agent/releases/latest/download/agent-darwin-amd64) |
-| Windows | [agent-windows-amd64.exe](https://github.com/YOUR_ORG/opensearch-doctor-agent/releases/latest/download/agent-windows-amd64.exe) |
+| Linux x86_64 | [agent-linux-amd64](https://github.com/iyanou/opensearch-doctor-agent/releases/latest/download/agent-linux-amd64) |
+| Linux ARM64 | [agent-linux-arm64](https://github.com/iyanou/opensearch-doctor-agent/releases/latest/download/agent-linux-arm64) |
+| macOS (Apple Silicon) | [agent-darwin-arm64](https://github.com/iyanou/opensearch-doctor-agent/releases/latest/download/agent-darwin-arm64) |
+| macOS (Intel) | [agent-darwin-amd64](https://github.com/iyanou/opensearch-doctor-agent/releases/latest/download/agent-darwin-amd64) |
+| Windows | [agent-windows-amd64.exe](https://github.com/iyanou/opensearch-doctor-agent/releases/latest/download/agent-windows-amd64.exe) |
 
 ### 3. Run the setup wizard
 
@@ -81,7 +81,7 @@ Then run:
 Requires Go 1.22+.
 
 ```bash
-git clone https://github.com/YOUR_ORG/opensearch-doctor-agent
+git clone https://github.com/iyanou/opensearch-doctor-agent
 cd opensearch-doctor-agent
 go build -o agent ./cmd/agent
 ```
