@@ -26,21 +26,31 @@ var saasURL = func() string {
 // runInit runs the interactive setup wizard.
 func runInit(configPath string) {
 	fmt.Println()
-	fmt.Println("╔══════════════════════════════════════════════╗")
-	fmt.Println("║   OpenSearch Doctor Agent — Setup Wizard     ║")
-	fmt.Println("╚══════════════════════════════════════════════╝")
+	fmt.Println("┌─────────────────────────────────────────────────┐")
+	fmt.Println("│   OpenSearch Doctor — Agent Setup               │")
+	fmt.Println("│   Answer a few questions to connect your cluster │")
+	fmt.Println("└─────────────────────────────────────────────────┘")
 	fmt.Println()
 
 	reader := bufio.NewReader(os.Stdin)
 
 	// ── Step 1: OpenSearch endpoint ───────────────────────────────────────────
-	fmt.Println("Step 1 of 5 — OpenSearch endpoint")
-	endpoint := prompt(reader, "  Endpoint", "https://localhost:9200")
+	fmt.Println("─── Step 1 of 5 ─ Your OpenSearch cluster address ──────────────────")
+	fmt.Println("  This is the URL where your OpenSearch cluster is running.")
+	fmt.Println("  Common examples:")
+	fmt.Println("    https://localhost:9200      (local / same machine)")
+	fmt.Println("    https://192.168.1.10:9200   (another server on your network)")
+	fmt.Println("    https://my-server.com:9200  (remote server)")
+	fmt.Println()
+	endpoint := prompt(reader, "  Cluster URL", "https://localhost:9200")
 	endpoint = strings.TrimRight(endpoint, "/")
 	fmt.Println()
 
 	// ── Step 2: Cluster name ──────────────────────────────────────────────────
-	fmt.Println("Step 2 of 5 — Cluster name")
+	fmt.Println("─── Step 2 of 5 ─ Give your cluster a name ─────────────────────────")
+	fmt.Println("  This name will appear in your OpenSearch Doctor dashboard.")
+	fmt.Println("  Use something meaningful like: production, staging, my-server")
+	fmt.Println()
 	hostname, _ := os.Hostname()
 	if hostname == "" {
 		hostname = "my-cluster"
@@ -49,75 +59,116 @@ func runInit(configPath string) {
 	fmt.Println()
 
 	// ── Step 3: OpenSearch credentials ───────────────────────────────────────
-	fmt.Println("Step 3 of 5 — OpenSearch authentication")
-	fmt.Println("  [1] Username + password  (default)")
-	fmt.Println("  [2] API key")
-	authChoice := prompt(reader, "  Choice", "1")
+	fmt.Println("─── Step 3 of 5 ─ OpenSearch login credentials ─────────────────────")
+	fmt.Println("  The agent needs read access to your cluster to run diagnostics.")
+	fmt.Println("  How do you connect to OpenSearch?")
+	fmt.Println()
+	fmt.Println("    [1] Username + password  ← most common (default)")
+	fmt.Println("    [2] API key              ← if your cluster uses token-based auth")
+	fmt.Println()
+	authChoice := prompt(reader, "  Your choice", "1")
 	fmt.Println()
 
 	var osUsername, osPassword, osAPIKey string
 	if strings.TrimSpace(authChoice) == "2" {
+		fmt.Println("  Enter the OpenSearch API key (not the OpenSearch Doctor key):")
 		osAPIKey = prompt(reader, "  OpenSearch API key", "")
 	} else {
+		fmt.Println("  Enter the username and password you use to log into OpenSearch.")
+		fmt.Println("  (default admin credentials are username: admin, password: admin)")
+		fmt.Println()
 		osUsername = prompt(reader, "  Username", "admin")
 		osPassword = promptSecret(reader, "  Password")
 	}
 	fmt.Println()
 
 	// ── Step 4: OpenSearch Doctor API key ────────────────────────────────────
-	fmt.Println("Step 4 of 5 — OpenSearch Doctor API key")
-	fmt.Println("  Go to Settings → Agent Keys in your dashboard to create a key.")
-	apiKey := prompt(reader, "  API key (osd_...)", "")
+	fmt.Println("─── Step 4 of 5 ─ Your OpenSearch Doctor API key ───────────────────")
+	fmt.Println("  This key links the agent to your OpenSearch Doctor account.")
+	fmt.Println()
+	fmt.Println("  If you haven't created one yet:")
+	fmt.Println("    1. Open your dashboard in the browser")
+	fmt.Println("    2. Go to Settings → Quick Start")
+	fmt.Println("    3. Type a key name and click Create")
+	fmt.Println("    4. Copy the key (it starts with osd_)")
+	fmt.Println()
+	apiKey := prompt(reader, "  Paste your key here (osd_...)", "")
 	if apiKey == "" {
-		fmt.Println("  ✗ API key is required. Aborting.")
+		fmt.Println()
+		fmt.Println("  ✗ A key is required to continue.")
+		fmt.Println("    Create one at Settings → Quick Start in your dashboard, then run --init again.")
 		os.Exit(1)
 	}
 	fmt.Println()
 
 	// ── Step 5: Test connections ──────────────────────────────────────────────
-	fmt.Println("Step 5 of 5 — Testing connections")
+	fmt.Println("─── Step 5 of 5 ─ Testing everything ───────────────────────────────")
+	fmt.Println()
 
-	fmt.Print("  › Connecting to OpenSearch... ")
+	fmt.Print("  › Connecting to OpenSearch at " + endpoint + "... ")
 	osVersion, err := testOpenSearch(endpoint, osUsername, osPassword, osAPIKey)
 	if err != nil {
-		fmt.Printf("\n  ✗ Cannot connect to OpenSearch: %v\n", err)
-		fmt.Println("  Check the endpoint and credentials, then run --init again.")
+		fmt.Println("FAILED")
+		fmt.Println()
+		fmt.Println("  ✗ Could not connect:", err)
+		fmt.Println("  Things to check:")
+		fmt.Println("    - Is the cluster URL correct?")
+		fmt.Println("    - Is OpenSearch running?")
+		fmt.Println("    - Are the username/password correct?")
+		fmt.Println()
+		fmt.Println("  Fix the issue then run --init again.")
 		os.Exit(1)
 	}
-	fmt.Printf("OK (OpenSearch %s)\n", osVersion)
+	fmt.Printf("OK  (OpenSearch %s)\n", osVersion)
 
-	fmt.Print("  › Validating API key... ")
+	fmt.Print("  › Validating your OpenSearch Doctor API key... ")
 	if err := testAPIKey(apiKey); err != nil {
-		fmt.Printf("\n  ✗ API key invalid: %v\n", err)
-		fmt.Println("  Generate a key at Settings → Agent Keys and try again.")
+		fmt.Println("FAILED")
+		fmt.Println()
+		fmt.Println("  ✗", err)
+		fmt.Println("  Things to check:")
+		fmt.Println("    - Did you copy the full key including the osd_ prefix?")
+		fmt.Println("    - Go to Settings → Quick Start in your dashboard to create a new key.")
+		fmt.Println()
+		fmt.Println("  Fix the issue then run --init again.")
 		os.Exit(1)
 	}
 	fmt.Println("OK")
 	fmt.Println()
 
 	// ── Write config.yaml ─────────────────────────────────────────────────────
+	fmt.Println("  ✓ All checks passed! Writing configuration...")
 	cfg := buildConfig(clusterName, endpoint, osUsername, osPassword, osAPIKey, apiKey)
 	if err := writeConfig(configPath, cfg); err != nil {
 		fmt.Printf("  ✗ Failed to write config: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("  ✓ Config written to %s\n\n", configPath)
+	fmt.Printf("  ✓ Config saved to %s\n", configPath)
+	fmt.Println()
 
 	// ── Service installation ──────────────────────────────────────────────────
-	fmt.Println("How do you want to run the agent?")
-	fmt.Println("  [1] Install as a background service — starts automatically on boot  (recommended)")
-	fmt.Println("  [2] Run once now — good for a single diagnostic snapshot")
-	fmt.Println("  [3] Skip — I'll start it manually later")
-	runChoice := prompt(reader, "  Choice", "1")
+	fmt.Println("────────────────────────────────────────────────────────────────────")
+	fmt.Println("  Last step — how should the agent run?")
+	fmt.Println()
+	fmt.Println("    [1] Background service  ← recommended")
+	fmt.Println("        Starts automatically when your computer/server boots.")
+	fmt.Println("        Monitors your cluster continuously without you doing anything.")
+	fmt.Println()
+	fmt.Println("    [2] Run once now")
+	fmt.Println("        Runs a single diagnostic check right now and exits.")
+	fmt.Println("        Good for testing before committing to a permanent setup.")
+	fmt.Println()
+	fmt.Println("    [3] Skip — I'll start it manually later")
+	fmt.Println()
+	runChoice := prompt(reader, "  Your choice", "1")
 	fmt.Println()
 
 	switch strings.TrimSpace(runChoice) {
 	case "1":
 		installService(configPath)
 	case "2":
-		fmt.Println("Running diagnostics now...")
+		fmt.Println("  Running diagnostics now...")
 		fmt.Println()
-		// Return — main() will proceed with normal run
 		return
 	default:
 		printManualInstructions(configPath)
@@ -202,13 +253,14 @@ func buildConfig(name, endpoint, username, password, osAPIKey, saasKey string) s
   tls_skip_verify: true
 
 saas:
-  api_url: %q
   api_key: %q
 
 agent:
+  # How often to run diagnostics (in minutes). Default: 30
   interval_minutes: 30
+  # How often to send a heartbeat to the dashboard (in seconds). Default: 60
   heartbeat_seconds: 60
-`, name, endpoint, authBlock, saasURL, saasKey)
+`, name, endpoint, authBlock, saasKey)
 }
 
 func writeConfig(path, content string) error {
