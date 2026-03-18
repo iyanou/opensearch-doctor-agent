@@ -82,6 +82,36 @@ func runInit(configPath string) {
 	}
 	fmt.Println()
 
+	// ── Step 3b: TLS verification ─────────────────────────────────────────────
+	fmt.Println("─── SSL / TLS certificate verification ─────────────────────────────")
+	fmt.Println("  Should the agent verify your OpenSearch server's SSL certificate?")
+	fmt.Println()
+	fmt.Println("    [1] Skip verification  ← easiest, works with self-signed certs (default)")
+	fmt.Println("    [2] Verify using system trusted certificates  ← for publicly signed certs")
+	fmt.Println("    [3] Verify using a custom CA certificate file  ← for internal/private CAs")
+	fmt.Println()
+	tlsChoice := prompt(reader, "  Your choice", "1")
+	fmt.Println()
+
+	tlsSkipVerify := true
+	caCertPath := ""
+	switch strings.TrimSpace(tlsChoice) {
+	case "2":
+		tlsSkipVerify = false
+		fmt.Println("  The agent will verify the certificate using your system's trusted CAs.")
+		fmt.Println()
+	case "3":
+		tlsSkipVerify = false
+		fmt.Println("  Enter the full path to your CA certificate file (PEM format).")
+		fmt.Println("  Example: /etc/ssl/certs/my-ca.crt  or  C:\\certs\\my-ca.crt")
+		fmt.Println()
+		caCertPath = prompt(reader, "  CA certificate path", "")
+		fmt.Println()
+	default:
+		fmt.Println("  SSL verification will be skipped (recommended for most setups).")
+		fmt.Println()
+	}
+
 	// ── Step 4: OpenSearch Doctor API key ────────────────────────────────────
 	fmt.Println("─── Step 4 of 5 ─ Your OpenSearch Doctor API key ───────────────────")
 	fmt.Println("  This key links the agent to your OpenSearch Doctor account.")
@@ -138,7 +168,7 @@ func runInit(configPath string) {
 
 	// ── Write config.yaml ─────────────────────────────────────────────────────
 	fmt.Println("  ✓ All checks passed! Writing configuration...")
-	cfg := buildConfig(clusterName, endpoint, osUsername, osPassword, osAPIKey, apiKey)
+	cfg := buildConfig(clusterName, endpoint, osUsername, osPassword, osAPIKey, apiKey, tlsSkipVerify, caCertPath)
 	if err := writeConfig(configPath, cfg); err != nil {
 		fmt.Printf("  ✗ Failed to write config: %v\n", err)
 		os.Exit(1)
@@ -238,7 +268,7 @@ func testAPIKey(apiKey string) error {
 
 // ── Config file ───────────────────────────────────────────────────────────────
 
-func buildConfig(name, endpoint, username, password, osAPIKey, saasKey string) string {
+func buildConfig(name, endpoint, username, password, osAPIKey, saasKey string, tlsSkipVerify bool, caCertPath string) string {
 	authBlock := ""
 	if osAPIKey != "" {
 		authBlock = fmt.Sprintf("  api_key: %q", osAPIKey)
@@ -246,11 +276,16 @@ func buildConfig(name, endpoint, username, password, osAPIKey, saasKey string) s
 		authBlock = fmt.Sprintf("  username: %q\n  password: %q", username, password)
 	}
 
+	tlsBlock := fmt.Sprintf("  tls_skip_verify: %v", tlsSkipVerify)
+	if caCertPath != "" {
+		tlsBlock += fmt.Sprintf("\n  ca_cert_path: %q", caCertPath)
+	}
+
 	return fmt.Sprintf(`cluster:
   name: %q
   endpoint: %q
 %s
-  tls_skip_verify: true
+%s
 
 saas:
   api_key: %q
@@ -260,7 +295,7 @@ agent:
   interval_minutes: 30
   # How often to send a heartbeat to the dashboard (in seconds). Default: 60
   heartbeat_seconds: 60
-`, name, endpoint, authBlock, saasKey)
+`, name, endpoint, authBlock, tlsBlock, saasKey)
 }
 
 func writeConfig(path, content string) error {
