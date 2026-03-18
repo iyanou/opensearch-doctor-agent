@@ -180,15 +180,20 @@ func runInit(configPath string) {
 	fmt.Println("────────────────────────────────────────────────────────────────────")
 	fmt.Println("  Last step — how should the agent run?")
 	fmt.Println()
-	fmt.Println("    [1] Background service  ← recommended")
-	fmt.Println("        Starts automatically when your computer/server boots.")
-	fmt.Println("        Monitors your cluster continuously without you doing anything.")
+	fmt.Println("    [1] Start now and keep running  ← recommended")
+
+	if runtime.GOOS == "linux" {
+		fmt.Println("        Installs a systemd service — starts automatically on every boot.")
+	} else {
+		fmt.Println("        Starts the agent in the background right now.")
+		fmt.Println("        Runs diagnostics every " + "interval_minutes" + " minutes.")
+		fmt.Println("        Note: you will need to start it again after a restart.")
+	}
+
 	fmt.Println()
 	fmt.Println("    [2] Run once now")
 	fmt.Println("        Runs a single diagnostic check right now and exits.")
-	fmt.Println("        Good for testing before committing to a permanent setup.")
-	fmt.Println()
-	fmt.Println("    [3] Skip — I'll start it manually later")
+	fmt.Println("        Good for a quick test.")
 	fmt.Println()
 	runChoice := prompt(reader, "  Your choice", "1")
 	fmt.Println()
@@ -196,12 +201,10 @@ func runInit(configPath string) {
 	switch strings.TrimSpace(runChoice) {
 	case "1":
 		installService(configPath)
-	case "2":
+	default:
 		fmt.Println("  Running diagnostics now...")
 		fmt.Println()
 		return
-	default:
-		printManualInstructions(configPath)
 	}
 
 	os.Exit(0)
@@ -315,12 +318,11 @@ func installService(configPath string) {
 	case "linux":
 		installSystemd(configPath)
 	case "darwin":
-		installLaunchd(configPath)
+		startBackground(configPath)
 	case "windows":
-		installTaskScheduler(configPath)
+		startBackground(configPath)
 	default:
-		fmt.Printf("  Unsupported OS (%s) for automatic service installation.\n", runtime.GOOS)
-		printManualInstructions(configPath)
+		startBackground(configPath)
 	}
 }
 
@@ -373,63 +375,9 @@ WantedBy=multi-user.target
 	fmt.Println("    sudo systemctl restart opensearch-doctor-agent")
 }
 
-func installLaunchd(configPath string) {
-	execPath, err := os.Executable()
-	if err != nil {
-		fmt.Println("  ✗ Cannot determine agent path:", err)
-		return
-	}
-	absConfig, _ := filepath.Abs(configPath)
-	absExec, _ := filepath.Abs(execPath)
-	logDir := filepath.Join(os.Getenv("HOME"), "Library", "Logs", "opensearch-doctor-agent")
-	os.MkdirAll(logDir, 0o755) //nolint:errcheck
-
-	plistContent := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.opensearchdoctor.agent</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>%s</string>
-    <string>--config</string>
-    <string>%s</string>
-  </array>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>%s/agent.log</string>
-  <key>StandardErrorPath</key>
-  <string>%s/agent.error.log</string>
-</dict>
-</plist>
-`, absExec, absConfig, logDir, logDir)
-
-	plistDir := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents")
-	os.MkdirAll(plistDir, 0o755) //nolint:errcheck
-	plistPath := filepath.Join(plistDir, "com.opensearchdoctor.agent.plist")
-
-	if err := os.WriteFile(plistPath, []byte(plistContent), 0o644); err != nil {
-		fmt.Println("  ✗ Cannot write plist:", err)
-		return
-	}
-
-	fmt.Println("  Loading launchd service...")
-	// Unload first in case it already exists
-	exec.Command("launchctl", "unload", plistPath).Run() //nolint:errcheck
-	run("launchctl", "load", "-w", plistPath)
-
-	fmt.Println()
-	fmt.Println("  ✓ Service installed. The agent will start now and on every login.")
-	fmt.Println("  Logs: " + logDir + "/agent.log")
-	fmt.Println("  To stop:    launchctl unload " + plistPath)
-	fmt.Println("  To restart: launchctl unload " + plistPath + " && launchctl load -w " + plistPath)
-}
-
-func installTaskScheduler(configPath string) {
+// startBackground launches the agent as a detached background process (macOS/Windows).
+// It does NOT register any service — the user must start it again after a reboot.
+func startBackground(configPath string) {
 	execPath, err := os.Executable()
 	if err != nil {
 		fmt.Println("  ✗ Cannot determine agent path:", err)
@@ -438,26 +386,28 @@ func installTaskScheduler(configPath string) {
 	absConfig, _ := filepath.Abs(configPath)
 	absExec, _ := filepath.Abs(execPath)
 
-	taskName := "OpenSearch Doctor Agent"
-	cmd := fmt.Sprintf(`"%s" --config "%s"`, absExec, absConfig)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		// On Windows use START to detach from the current console
+		cmd = exec.Command("cmd", "/C", "start", "/B", absExec, "--config", absConfig)
+	} else {
+		// macOS / other Unix
+		cmd = exec.Command(absExec, "--config", absConfig)
+		cmd.SysProcAttr = newSysProcAttr() // sets Setpgid=true to detach
+	}
 
-	fmt.Println("  Registering Task Scheduler task (may require Administrator)...")
-	run("schtasks", "/create",
-		"/tn", taskName,
-		"/tr", cmd,
-		"/sc", "onlogon",
-		"/ru", os.Getenv("USERNAME"),
-		"/rl", "HIGHEST",
-		"/f",
-	)
-
-	// Start it immediately
-	run("schtasks", "/run", "/tn", taskName)
+	if err := cmd.Start(); err != nil {
+		fmt.Println("  ✗ Failed to start agent in background:", err)
+		return
+	}
 
 	fmt.Println()
-	fmt.Println("  ✓ Task created. The agent will start now and on every login.")
-	fmt.Println("  To stop:  schtasks /end /tn \"" + taskName + "\"")
-	fmt.Println("  To remove: schtasks /delete /tn \"" + taskName + "\" /f")
+	fmt.Println("  ✓ Agent is running in the background.")
+	fmt.Println("  It will send diagnostics on the interval set in config.yaml.")
+	fmt.Println()
+	fmt.Println("  Note: the agent will NOT restart automatically after a reboot.")
+	fmt.Println("  To start it again, run:")
+	fmt.Printf("    %s --config %s\n", absExec, absConfig)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
