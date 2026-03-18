@@ -388,8 +388,10 @@ func startBackground(configPath string) {
 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		// On Windows use START to detach from the current console
-		cmd = exec.Command("cmd", "/C", "start", "/B", absExec, "--config", absConfig)
+		// Use PowerShell Start-Process for reliable background launch on Windows
+		cmd = exec.Command("powershell", "-Command",
+			fmt.Sprintf(`Start-Process -FilePath "%s" -ArgumentList "--config","%s" -WindowStyle Hidden`, absExec, absConfig),
+		)
 	} else {
 		// macOS / other Unix
 		cmd = exec.Command(absExec, "--config", absConfig)
@@ -398,15 +400,36 @@ func startBackground(configPath string) {
 
 	if err := cmd.Start(); err != nil {
 		fmt.Println("  ✗ Failed to start agent in background:", err)
+		fmt.Println()
+		fmt.Println("  Start it manually by running:")
+		fmt.Printf("    %s --config %s\n", absExec, absConfig)
 		return
 	}
 
+	// Wait for the launcher to finish (the actual agent runs detached)
+	cmd.Wait() //nolint:errcheck
+
 	fmt.Println()
-	fmt.Println("  ✓ Agent is running in the background.")
-	fmt.Println("  It will send diagnostics on the interval set in config.yaml.")
+	fmt.Println("  ✓ Agent started in the background.")
+	fmt.Println()
+
+	if runtime.GOOS == "windows" {
+		fmt.Println("  To verify it is running:")
+		fmt.Println(`    tasklist | findstr agent`)
+		fmt.Println()
+		fmt.Println("  To stop it:")
+		fmt.Println(`    taskkill /IM agent.exe /F`)
+	} else {
+		fmt.Println("  To verify it is running:")
+		fmt.Println(`    pgrep -a agent`)
+		fmt.Println()
+		fmt.Println("  To stop it:")
+		fmt.Println(`    pkill agent`)
+	}
+
 	fmt.Println()
 	fmt.Println("  Note: the agent will NOT restart automatically after a reboot.")
-	fmt.Println("  To start it again, run:")
+	fmt.Println("  To start it again after a restart, run:")
 	fmt.Printf("    %s --config %s\n", absExec, absConfig)
 }
 
