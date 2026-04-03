@@ -16,8 +16,8 @@ cluster:
   # ca_cert_path: "/path/to/ca.pem"
 
 saas:
-  # SaaS API URL (default: https://app.opensearchdoctor.com)
-  api_url: "https://app.opensearchdoctor.com"
+  # SaaS API URL (default: https://opensearchdoctor.com)
+  api_url: "https://opensearchdoctor.com"
   # API key from the OpenSearch Doctor dashboard (Settings → Agent Keys)
   api_key: "osd_your_key_here"
 

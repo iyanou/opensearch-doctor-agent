@@ -57,11 +57,11 @@ func Load(path string) (*Config, error) {
 	v.SetConfigFile(path)
 
 	// Defaults
-	v.SetDefault("agent.interval_minutes", 360)
+	v.SetDefault("agent.interval_minutes", 30)
 	v.SetDefault("agent.heartbeat_seconds", 300)
 	v.SetDefault("agent.log_file", "agent.log")
 	v.SetDefault("cluster.environment", "production")
-	v.SetDefault("saas.api_url", "http://localhost:3000")
+	v.SetDefault("saas.api_url", "https://opensearchdoctor.com")
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("reading config file %s: %w", path, err)

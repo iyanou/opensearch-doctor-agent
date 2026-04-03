@@ -16,6 +16,7 @@ import (
 type Payload struct {
 	CollectedAt     time.Time        `json:"collectedAt"`
 	DurationMs      int64            `json:"durationMs"`
+	SingleNode      bool             `json:"singleNode"`
 	ClusterHealth   *ClusterHealth   `json:"clusterHealth,omitempty"`
 	Nodes           *NodesData       `json:"nodes,omitempty"`
 	Shards          *ShardsData      `json:"shards,omitempty"`
@@ -27,6 +28,7 @@ type Payload struct {
 	Plugins         *PluginsData     `json:"plugins,omitempty"`
 	IngestPipelines *IngestData      `json:"ingestPipelines,omitempty"`
 	Templates       *TemplatesData   `json:"templates,omitempty"`
+	CircuitBreakers *CircuitBreakersData `json:"circuitBreakers,omitempty"`
 }
 
 // Collect runs all enabled diagnostic checks against the cluster.
@@ -63,6 +65,7 @@ func Collect(ctx context.Context, client *opensearch.Client, log *zap.Logger) (*
 		log.Warn("nodes collection failed", zap.Error(err))
 	} else {
 		payload.Nodes = nodes
+		payload.SingleNode = len(nodes.Nodes) == 1
 		log.Info("nodes collected", zap.Int("count", len(nodes.Nodes)))
 	}
 
@@ -138,6 +141,14 @@ func Collect(ctx context.Context, client *opensearch.Client, log *zap.Logger) (*
 		log.Info("templates collected", zap.Int("count", templates.TemplatesCount))
 	}
 
+	breakers, err := collectCircuitBreakers(ctx, client)
+	if err != nil {
+		log.Warn("circuit breakers collection failed", zap.Error(err))
+	} else {
+		payload.CircuitBreakers = breakers
+		log.Info("circuit breakers collected")
+	}
+
 	payload.DurationMs = time.Since(start).Milliseconds()
 	return payload, nil
 }
@@ -161,12 +172,13 @@ func get(ctx context.Context, client *opensearch.Client, path string) ([]byte, e
 // ─── Cluster Health ───────────────────────────────────────────
 
 type ClusterHealth struct {
-	Status            string `json:"status"`
-	NumberOfNodes     int    `json:"numberOfNodes"`
-	NumberOfDataNodes int    `json:"numberOfDataNodes"`
-	ActiveShards      int    `json:"activeShards"`
-	UnassignedShards  int    `json:"unassignedShards"`
-	PendingTasks      int    `json:"pendingTasks"`
+	Status                string `json:"status"`
+	NumberOfNodes         int    `json:"numberOfNodes"`
+	NumberOfDataNodes     int    `json:"numberOfDataNodes"`
+	ActiveShards          int    `json:"activeShards"`
+	UnassignedShards      int    `json:"unassignedShards"`
+	PendingTasks          int    `json:"pendingTasks"`
+	PendingTasksMaxWaitMs int64  `json:"pendingTasksMaxWaitMs"`
 }
 
 func collectClusterHealth(ctx context.Context, client *opensearch.Client) (*ClusterHealth, error) {
@@ -185,26 +197,47 @@ func collectClusterHealth(ctx context.Context, client *opensearch.Client) (*Clus
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, err
 	}
-	return &ClusterHealth{
+	h := &ClusterHealth{
 		Status: raw.Status, NumberOfNodes: raw.NumberOfNodes,
 		NumberOfDataNodes: raw.NumberOfDataNodes, ActiveShards: raw.ActiveShards,
 		UnassignedShards: raw.UnassignedShards, PendingTasks: raw.PendingTasks,
-	}, nil
+	}
+
+	// Fetch max pending task wait time (3d)
+	if raw.PendingTasks > 0 {
+		if ptBody, ptErr := get(ctx, client, "/_cluster/pending_tasks"); ptErr == nil {
+			var ptRaw struct {
+				Tasks []struct {
+					TimeInQueueMillis int64 `json:"time_in_queue_millis"`
+				} `json:"tasks"`
+			}
+			if json.Unmarshal(ptBody, &ptRaw) == nil {
+				for _, t := range ptRaw.Tasks {
+					if t.TimeInQueueMillis > h.PendingTasksMaxWaitMs {
+						h.PendingTasksMaxWaitMs = t.TimeInQueueMillis
+					}
+				}
+			}
+		}
+	}
+	return h, nil
 }
 
 // ─── Nodes ────────────────────────────────────────────────────
 
 type NodeStat struct {
-	ID               string   `json:"id"`
-	Name             string   `json:"name"`
-	Roles            []string `json:"roles"`
-	HeapUsedPercent  float64  `json:"heapUsedPercent"`
-	CPUPercent       float64  `json:"cpuPercent"`
-	DiskUsedPercent  float64  `json:"diskUsedPercent"`
-	DiskTotalBytes   int64    `json:"diskTotalBytes"`
-	DiskAvailBytes   int64    `json:"diskAvailableBytes"`
-	UptimeMs         int64    `json:"uptimeMs"`
-	OSMemUsedPercent float64  `json:"osMemUsedPercent"`
+	ID                    string   `json:"id"`
+	Name                  string   `json:"name"`
+	Roles                 []string `json:"roles"`
+	HeapUsedPercent       float64  `json:"heapUsedPercent"`
+	CPUPercent            float64  `json:"cpuPercent"`
+	DiskUsedPercent       float64  `json:"diskUsedPercent"`
+	DiskTotalBytes        int64    `json:"diskTotalBytes"`
+	DiskAvailBytes        int64    `json:"diskAvailableBytes"`
+	UptimeMs              int64    `json:"uptimeMs"`
+	OSMemUsedPercent      float64  `json:"osMemUsedPercent"`
+	GCOldCollectionTimeMs int64    `json:"gcOldCollectionTimeMs"`
+	GCOldCollectionCount  int64    `json:"gcOldCollectionCount"`
 }
 
 type NodesData struct {
@@ -223,6 +256,14 @@ func collectNodes(ctx context.Context, client *opensearch.Client) (*NodesData, e
 			JVM   struct {
 				Mem    struct{ HeapUsedPercent float64 `json:"heap_used_percent"` } `json:"mem"`
 				Uptime int64 `json:"uptime_in_millis"`
+				GC     struct {
+					Collectors struct {
+						Old struct {
+							CollectionTimeMs int64 `json:"collection_time_in_millis"`
+							CollectionCount  int64 `json:"collection_count"`
+						} `json:"old"`
+					} `json:"collectors"`
+				} `json:"gc"`
 			} `json:"jvm"`
 			OS struct {
 				CPU struct{ Percent float64 `json:"percent"` } `json:"cpu"`
@@ -249,10 +290,13 @@ func collectNodes(ctx context.Context, client *opensearch.Client) (*NodesData, e
 		}
 		stats = append(stats, NodeStat{
 			ID: id, Name: n.Name, Roles: n.Roles,
-			HeapUsedPercent: n.JVM.Mem.HeapUsedPercent,
-			CPUPercent:      n.OS.CPU.Percent,
-			DiskUsedPercent: pct, DiskTotalBytes: diskTotal, DiskAvailBytes: diskAvail,
-			UptimeMs: n.JVM.Uptime, OSMemUsedPercent: n.OS.Mem.UsedPercent,
+			HeapUsedPercent:       n.JVM.Mem.HeapUsedPercent,
+			CPUPercent:            n.OS.CPU.Percent,
+			DiskUsedPercent:       pct, DiskTotalBytes: diskTotal, DiskAvailBytes: diskAvail,
+			UptimeMs:              n.JVM.Uptime,
+			OSMemUsedPercent:      n.OS.Mem.UsedPercent,
+			GCOldCollectionTimeMs: n.JVM.GC.Collectors.Old.CollectionTimeMs,
+			GCOldCollectionCount:  n.JVM.GC.Collectors.Old.CollectionCount,
 		})
 	}
 	return &NodesData{Nodes: stats}, nil
@@ -265,6 +309,7 @@ type ShardsData struct {
 	UnassignedReasons map[string]int `json:"unassignedReasons"`
 	ShardCountPerNode map[string]int `json:"shardCountPerNode"`
 	AvgShardSizeBytes float64        `json:"avgShardSizeBytes"`
+	TotalShardCount   int            `json:"totalShardCount"`
 }
 
 func collectShards(ctx context.Context, client *opensearch.Client) (*ShardsData, error) {
@@ -306,6 +351,9 @@ func collectShards(ctx context.Context, client *opensearch.Client) (*ShardsData,
 	}
 	if assignedCount > 0 {
 		data.AvgShardSizeBytes = totalSize / float64(assignedCount)
+	}
+	for _, count := range data.ShardCountPerNode {
+		data.TotalShardCount += count
 	}
 	return data, nil
 }
@@ -734,6 +782,40 @@ func collectIngestPipelines(ctx context.Context, client *opensearch.Client) (*In
 		if !referenced[name] {
 			data.OrphanedPipelines++
 		}
+	}
+	return data, nil
+}
+
+// ─── Circuit Breakers ─────────────────────────────────────────
+
+type CircuitBreakersData struct {
+	FielddataTripped int64 `json:"fielddataTripped"`
+	RequestTripped   int64 `json:"requestTripped"`
+	ParentTripped    int64 `json:"parentTripped"`
+}
+
+func collectCircuitBreakers(ctx context.Context, client *opensearch.Client) (*CircuitBreakersData, error) {
+	body, err := get(ctx, client, "/_nodes/stats/breaker")
+	if err != nil {
+		return nil, err
+	}
+	var raw struct {
+		Nodes map[string]struct {
+			Breakers struct {
+				Fielddata struct{ Tripped int64 `json:"tripped"` } `json:"fielddata"`
+				Request   struct{ Tripped int64 `json:"tripped"` } `json:"request"`
+				Parent    struct{ Tripped int64 `json:"tripped"` } `json:"parent"`
+			} `json:"breakers"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, err
+	}
+	data := &CircuitBreakersData{}
+	for _, n := range raw.Nodes {
+		data.FielddataTripped += n.Breakers.Fielddata.Tripped
+		data.RequestTripped += n.Breakers.Request.Tripped
+		data.ParentTripped += n.Breakers.Parent.Tripped
 	}
 	return data, nil
 }

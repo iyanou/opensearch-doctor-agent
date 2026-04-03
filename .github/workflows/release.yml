@@ -24,6 +24,11 @@ jobs:
         with:
           go-version: "1.22"
 
+      - name: Verify
+        run: |
+          go vet ./...
+          go test ./...
+
       - name: Extract version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
@@ -32,41 +37,68 @@ jobs:
         run: |
           VERSION=${{ steps.version.outputs.VERSION }}
           LDFLAGS="-X main.AgentVersion=${VERSION} -s -w"
+          mkdir -p dist
 
-          GOOS=linux   GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o dist/agent-linux-amd64   ./cmd/agent
-          GOOS=linux   GOARCH=arm64 go build -ldflags "${LDFLAGS}" -o dist/agent-linux-arm64   ./cmd/agent
-          GOOS=darwin  GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o dist/agent-darwin-amd64  ./cmd/agent
-          GOOS=darwin  GOARCH=arm64 go build -ldflags "${LDFLAGS}" -o dist/agent-darwin-arm64  ./cmd/agent
+          GOOS=linux   GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o dist/agent-linux-amd64       ./cmd/agent
+          GOOS=linux   GOARCH=arm64 go build -ldflags "${LDFLAGS}" -o dist/agent-linux-arm64       ./cmd/agent
+          GOOS=darwin  GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o dist/agent-darwin-amd64      ./cmd/agent
+          GOOS=darwin  GOARCH=arm64 go build -ldflags "${LDFLAGS}" -o dist/agent-darwin-arm64      ./cmd/agent
           GOOS=windows GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o dist/agent-windows-amd64.exe ./cmd/agent
+
+      - name: Generate SHA256 checksums
+        run: |
+          cd dist
+          sha256sum agent-linux-amd64 agent-linux-arm64 agent-darwin-amd64 agent-darwin-arm64 agent-windows-amd64.exe > checksums.txt
+          cat checksums.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: "OpenSearch Doctor Agent ${{ steps.version.outputs.VERSION }}"
           body: |
+            ## What's in this release
+
+            See the [CHANGELOG](https://github.com/opensearch-doctor/agent/blob/main/CHANGELOG.md) for details.
+
             ## Installation
 
             ### Linux / macOS
             ```bash
             # Linux x86_64
-            curl -Lo agent https://github.com/iyanou/opensearch-doctor-agent/releases/download/${{ steps.version.outputs.VERSION }}/agent-linux-amd64
+            curl -Lo agent https://github.com/opensearch-doctor/agent/releases/download/${{ steps.version.outputs.VERSION }}/agent-linux-amd64
+            chmod +x agent && ./agent --init
+
+            # Linux ARM64
+            curl -Lo agent https://github.com/opensearch-doctor/agent/releases/download/${{ steps.version.outputs.VERSION }}/agent-linux-arm64
             chmod +x agent && ./agent --init
 
             # macOS Apple Silicon
-            curl -Lo agent https://github.com/iyanou/opensearch-doctor-agent/releases/download/${{ steps.version.outputs.VERSION }}/agent-darwin-arm64
+            curl -Lo agent https://github.com/opensearch-doctor/agent/releases/download/${{ steps.version.outputs.VERSION }}/agent-darwin-arm64
+            chmod +x agent && ./agent --init
+
+            # macOS Intel
+            curl -Lo agent https://github.com/opensearch-doctor/agent/releases/download/${{ steps.version.outputs.VERSION }}/agent-darwin-amd64
             chmod +x agent && ./agent --init
             ```
 
             ### Windows (PowerShell)
             ```powershell
-            Invoke-WebRequest -Uri "https://github.com/iyanou/opensearch-doctor-agent/releases/download/${{ steps.version.outputs.VERSION }}/agent-windows-amd64.exe" -OutFile agent.exe
+            Invoke-WebRequest -Uri "https://github.com/opensearch-doctor/agent/releases/download/${{ steps.version.outputs.VERSION }}/agent-windows-amd64.exe" -OutFile agent.exe
             .\agent.exe --init
             ```
 
-            See the [README](https://github.com/iyanou/opensearch-doctor-agent#readme) for full documentation.
+            ### Verify integrity
+            ```bash
+            # Download the checksum file and verify
+            curl -Lo checksums.txt https://github.com/opensearch-doctor/agent/releases/download/${{ steps.version.outputs.VERSION }}/checksums.txt
+            sha256sum -c checksums.txt
+            ```
+
+            See the [README](https://github.com/opensearch-doctor/agent#readme) for full documentation.
           files: |
             dist/agent-linux-amd64
             dist/agent-linux-arm64
             dist/agent-darwin-amd64
             dist/agent-darwin-arm64
             dist/agent-windows-amd64.exe
+            dist/checksums.txt

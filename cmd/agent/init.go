@@ -20,7 +20,7 @@ var saasURL = func() string {
 	if v := os.Getenv("OPENSEARCH_DOCTOR_URL"); v != "" {
 		return strings.TrimRight(v, "/")
 	}
-	return "http://localhost:3000"
+	return "https://opensearchdoctor.com"
 }()
 
 // runInit runs the interactive setup wizard.
@@ -294,10 +294,10 @@ saas:
   api_key: %q
 
 agent:
-  # How often to run diagnostics (in minutes). Default: 30
+  # How often to run diagnostics (in minutes). Default: 30. Reduce for more frequent checks.
   interval_minutes: 30
-  # How often to send a heartbeat to the dashboard (in seconds). Default: 60
-  heartbeat_seconds: 60
+  # How often to send a heartbeat to the dashboard (in seconds). Default: 300.
+  heartbeat_seconds: 300
 `, name, endpoint, authBlock, tlsBlock, saasKey)
 }
 
